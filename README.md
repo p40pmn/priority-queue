@@ -19,6 +19,6 @@ This project implements a **priority queue** using Redis' sorted sets to manage 
 To get started, make sure you have Redis installed and running on your machine. Then, clone this repository and install the dependencies.
 
 ```bash
-git clone https://github.com/yourusername/priority-queue.git
+git clone git@github.com:p40pmn/priority-queue.git
 cd priority-queue
 ```
