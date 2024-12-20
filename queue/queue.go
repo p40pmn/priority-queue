@@ -60,7 +60,6 @@ func NewService(ctx context.Context, redisClient *redis.Client) (*Service, error
 		).
 		Err()
 	if err != nil && err.Error() != "Index already exists" {
-		fmt.Printf("\nvalue: %v | Type: %T \n", err, err)
 		return nil, fmt.Errorf("failed to create index: %w", err)
 	}
 
