@@ -3,8 +3,9 @@ package queue
 import (
 	"context"
 	"fmt"
-	"time"
+	"strings"
 
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -15,7 +16,7 @@ const (
 	queueKey = "queue:%s"
 
 	// dequeueKey is the key used to store the dequeued items in Redis.
-	dequeueKey = "dequeue:%d"
+	dequeueKey = "dequeue:%s"
 
 	// releaseKey is the key used to store the released items in Redis.
 	releaseKey = "release:%s"
@@ -295,7 +296,12 @@ func (q *Service) IsDequeued(ctx context.Context, queueID string, memberID strin
 		return false, err
 	}
 
-	fmt.Printf("\n%v\n", member)
+	if d, ok := member.([]interface{}); ok {
+		numResults, ok := d[0].(int64)
+		if ok && numResults > 0 {
+			return true, nil
+		}
+	}
 	return false, nil
 }
 
@@ -369,9 +375,11 @@ func dequeueByRank(ctx context.Context, redisClient *redis.Client, queueID strin
 	var d dequeueKyToStore
 	d.ID = queueID
 	d.Members = members
+	uid := uuid.New().String()
+
 	err = redisClient.JSONSet(
 		ctx,
-		fmt.Sprintf(dequeueKey, time.Now().UnixNano()),
+		fmt.Sprintf(dequeueKey, strings.Split(uid, "-")[4]),
 		"$",
 		d,
 	).
