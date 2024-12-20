@@ -13,9 +13,10 @@ import (
 func main() {
 	ctx := context.Background()
 	redisClient := redis.NewClient(&redis.Options{
-		Addr:         fmt.Sprintf("%s:%s", getEnv("REDIS_HOST", "127.0.0.1"), getEnv("REDIS_PORT", "6379")),
-		MinIdleConns: 10,
-		PoolSize:     15,
+		Addr:          fmt.Sprintf("%s:%s", getEnv("REDIS_HOST", "127.0.0.1"), getEnv("REDIS_PORT", "6379")),
+		MinIdleConns:  10,
+		PoolSize:      15,
+		UnstableResp3: true,
 	})
 	if err := redisClient.Ping(ctx).Err(); err != nil {
 		log.Fatalf("redis client not connected: %v", err)
@@ -59,13 +60,32 @@ func main() {
 		log.Fatalf("failed to enqueue item: %v", err)
 	}
 
-	if err := q.Dequeue(ctx, &queue.DequeueReq{
+	members, err := q.Dequeue(ctx, &queue.DequeueReq{
 		ID:                 "LITD_QUEUE",
 		ReleaseAll:         false,
 		FirstDequeue:       true,
-		FirstDequeueNumber: 1,
-	}); err != nil {
+		FirstDequeueNumber: 5,
+	})
+	if err != nil {
 		log.Fatalf("failed to dequeue item: %v", err)
+	}
+
+	fmt.Println("Member: ", members)
+
+	if err := q.Enqueue(ctx, &queue.EnqueueReq{
+		ID:       "LITD_QUEUE",
+		MemberID: "LITD_MEMBER_SONE",
+		Score:    5,
+	}); err != nil {
+		log.Fatalf("failed to enqueue item: %v", err)
+	}
+
+	if err := q.Enqueue(ctx, &queue.EnqueueReq{
+		ID:       "LITD_QUEUE",
+		MemberID: "LITD_MEMBER_BIN",
+		Score:    3,
+	}); err != nil {
+		log.Fatalf("failed to enqueue item: %v", err)
 	}
 
 	member, err := q.PeekByQueueID(ctx, "LITD_QUEUE")
@@ -77,7 +97,7 @@ func main() {
 
 	position, err := q.GetPosition(ctx, &queue.PositionReq{
 		ID:       "LITD_QUEUE",
-		MemberID: "LITD_MEMBER_VONGXAY",
+		MemberID: "LITD_MEMBER_SONE",
 	})
 	if err != nil {
 		log.Fatalf("failed to get position: %v", err)
@@ -86,7 +106,7 @@ func main() {
 
 	if err := q.SetPriority(ctx, &queue.SetPriorityReq{
 		ID:       "LITD_QUEUE",
-		MemberID: "LITD_MEMBER_VONGXAY",
+		MemberID: "LITD_MEMBER_SONE",
 		Score:    3,
 	}); err != nil {
 		log.Fatalf("failed to set priority: %v", err)
@@ -94,10 +114,22 @@ func main() {
 
 	if err := q.Delete(ctx, &queue.DeleteReq{
 		ID:       "LITD_QUEUE",
-		MemberID: "LITD_MEMBER_VONGXAY",
+		MemberID: "LITD_MEMBER_SONE",
 	}); err != nil {
 		log.Fatalf("failed to delete item: %v", err)
 	}
+
+	soneWasDequeued, err := q.IsDequeued(ctx, "LITD_QUEUE", "LITD_MEMBER_SONE")
+	if err != nil {
+		log.Fatalf("failed to check dequeued: %v", err)
+	}
+	fmt.Println("SONE dequeued: ", soneWasDequeued)
+
+	paoWasDequeued, err := q.IsDequeued(ctx, "LITD_QUEUE", "LITD_MEMBER_PAO")
+	if err != nil {
+		log.Fatalf("failed to check dequeued: %v", err)
+	}
+	fmt.Println("pao dequeued: ", paoWasDequeued)
 }
 
 func getEnv(key, fallback string) string {
