@@ -296,8 +296,7 @@ func (q *Service) IsDequeued(ctx context.Context, queueID string, memberID strin
 	}
 
 	if d, ok := member.([]interface{}); ok {
-		numResults, ok := d[0].(int64)
-		if ok && numResults > 0 {
+		if len(d) > 1 {
 			return true, nil
 		}
 	}
