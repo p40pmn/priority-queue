@@ -28,3 +28,7 @@ cd priority-queue
   go mod tidy
   go run example/main.go
 ```
+
+## Note
+
+Must be set ```UnstableResp3``` to be ```true```.
