@@ -13,10 +13,10 @@ import (
 func main() {
 	ctx := context.Background()
 	redisClient := redis.NewClient(&redis.Options{
-		Addr:          fmt.Sprintf("%s:%s", getEnv("REDIS_HOST", "127.0.0.1"), getEnv("REDIS_PORT", "6379")),
-		MinIdleConns:  10,
-		PoolSize:      15,
-		UnstableResp3: true,
+		Addr:         fmt.Sprintf("%s:%s", getEnv("REDIS_HOST", "127.0.0.1"), getEnv("REDIS_PORT", "6379")),
+		MinIdleConns: 10,
+		PoolSize:     15,
+		Protocol:     2,
 	})
 	if err := redisClient.Ping(ctx).Err(); err != nil {
 		log.Fatalf("redis client not connected: %v", err)

@@ -285,22 +285,21 @@ func (q *Service) IsDequeued(ctx context.Context, queueID string, memberID strin
 		return true, nil
 	}
 
-	member, err := q.redisClient.
-		FTSearch(
+	members, err := q.redisClient.
+		FTSearchWithArgs(
 			ctx,
 			fmt.Sprintf(idxKey, "dequeue"),
 			fmt.Sprintf("@id:{%s} @members:{%s}", queueID, memberID),
-		).RawResult()
+			&redis.FTSearchOptions{
+				WithScores: true,
+				Limit:      1,
+			},
+		).Result()
 	if err != nil {
 		return false, err
 	}
 
-	if d, ok := member.([]interface{}); ok {
-		if len(d) > 1 {
-			return true, nil
-		}
-	}
-	return false, nil
+	return members.Total > 0, nil
 }
 
 type dequeueKyToStore struct {

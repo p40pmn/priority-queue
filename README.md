@@ -31,4 +31,4 @@ cd priority-queue
 
 ## Note
 
-Must be set ```UnstableResp3``` to be ```true``` in redis new client.
+Must be set ```Protocol``` to be ```2``` in redis new client.
