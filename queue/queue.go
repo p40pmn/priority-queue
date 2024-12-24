@@ -3,9 +3,7 @@ package queue
 import (
 	"context"
 	"fmt"
-	"strings"
 
-	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -18,8 +16,8 @@ const (
 	// dequeueKey is the key used to store the dequeued items in Redis.
 	dequeueKey = "dequeue:%s"
 
-	// releaseKey is the key used to store the released items in Redis.
-	releaseKey = "release:%s"
+	// clearKey is the key used to store the clear flag in Redis.
+	clearKey = "clear:%s"
 
 	// idxKey is the key used to store the index in Redis.
 	idxKey = "idx:%s"
@@ -37,30 +35,6 @@ type Service struct {
 func NewService(ctx context.Context, redisClient *redis.Client) (*Service, error) {
 	if redisClient == nil {
 		return nil, fmt.Errorf("redis client is nil")
-	}
-
-	err := redisClient.
-		FTCreate(
-			ctx,
-			fmt.Sprintf(idxKey, "dequeue"),
-			&redis.FTCreateOptions{
-				OnJSON: true,
-				Prefix: []interface{}{"dequeue:"},
-			},
-			&redis.FieldSchema{
-				FieldName: "$.id",
-				As:        "id",
-				FieldType: redis.SearchFieldTypeTag,
-			},
-			&redis.FieldSchema{
-				FieldName: "$.members",
-				As:        "members",
-				FieldType: redis.SearchFieldTypeTag,
-			},
-		).
-		Err()
-	if err != nil && err.Error() != "Index already exists" {
-		return nil, fmt.Errorf("failed to create index: %w", err)
 	}
 
 	return &Service{
@@ -109,27 +83,20 @@ type DequeueReq struct {
 	// The unique identifier for the queue.
 	ID string
 
-	// FirstDequeue indicates whether to dequeue the first N items (true) or a single item (false).
-	FirstDequeue bool
-
-	// FirstDequeueNumber is the number of items to dequeue if FirstDequeue is true.
+	// Number is the number of items to dequeue.
 	// If 0, a single item is dequeued by default.
-	FirstDequeueNumber int
-
-	// ReleaseAll indicates whether to release all items in the queue.
-	// If true, all items in the queue are dequeued regardless of other fields.
-	ReleaseAll bool
+	Number int
 }
 
 // Dequeue removes one or more items from the specified queue.
 //
-// The function behavior is controlled by the fields in the DequeueReq struct:
-//   - If ReleaseAll is true, all items in the queue are removed.
-//   - If FirstDequeue is true, the first N items are removed, where N is the value of FirstDequeueNumber.
-//     If FirstDequeueNumber is 0, a single item is removed by default.
-//   - If FirstDequeue is false, a single item is removed from the queue.
+// The function retrieves and removes the specified number of items from the queue,
+// starting from the item with the highest priority (lowest score). If the "Number"
+// field in the request is greater than 1, it removes multiple items up to the specified
+// number. If it is 0 or not specified, a single item is removed by default.
 //
 // Returns:
+//   - A slice of strings containing the dequeued item IDs.
 //   - An error if the operation fails; otherwise, nil.
 func (q *Service) Dequeue(ctx context.Context, in *DequeueReq) ([]string, error) {
 	queueLen, err := q.redisClient.
@@ -145,15 +112,48 @@ func (q *Service) Dequeue(ctx context.Context, in *DequeueReq) ([]string, error)
 		return []string{}, nil
 	}
 
-	if in.ReleaseAll {
-		return dequeueAllMembersByScore(ctx, q.redisClient, in.ID)
-	}
-
-	if in.FirstDequeue && in.FirstDequeueNumber > 1 {
-		return dequeueByRank(ctx, q.redisClient, in.ID, int64(in.FirstDequeueNumber-1))
+	if in.Number > 1 {
+		return dequeueByRank(ctx, q.redisClient, in.ID, int64(in.Number-1))
 	}
 
 	return dequeueByRank(ctx, q.redisClient, in.ID, 0)
+}
+
+func (q *Service) Clear(ctx context.Context, queueID string) error {
+	queueLen, err := q.redisClient.
+		ZCard(
+			ctx,
+			fmt.Sprintf(queueKey, queueID),
+		).
+		Uint64()
+	if err != nil {
+		return err
+	}
+	if queueLen == 0 {
+		return nil
+	}
+
+	err = q.redisClient.
+		ZRemRangeByScore(
+			ctx,
+			fmt.Sprintf(queueKey, queueID),
+			"-inf", "+inf",
+		).
+		Err()
+	if err != nil {
+		return err
+	}
+
+	if err := q.redisClient.Set(
+		ctx,
+		fmt.Sprintf(clearKey, queueID),
+		true,
+		0,
+	).
+		Err(); err != nil {
+		return err
+	}
+	return nil
 }
 
 // PeekByQueueID returns the first item in the specified queue.
@@ -275,73 +275,28 @@ func (q *Service) Delete(ctx context.Context, in *DeleteReq) error {
 //
 // The function returns an error if the operation fails; otherwise, nil.
 func (q *Service) IsDequeued(ctx context.Context, queueID string, memberID string) (bool, error) {
-	isRelease, err := q.redisClient.
+	isCleared, err := q.redisClient.
 		Exists(
 			ctx,
-			fmt.Sprintf(releaseKey, queueID),
+			fmt.Sprintf(clearKey, queueID),
 		).
 		Result()
-	if err == nil && isRelease == 1 {
+	if err == nil && isCleared == 1 {
 		return true, nil
 	}
 
-	members, err := q.redisClient.
-		FTSearchWithArgs(
+	isDequeued, err := q.redisClient.
+		SIsMember(
 			ctx,
-			fmt.Sprintf(idxKey, "dequeue"),
-			fmt.Sprintf("@id:{%s} @members:{%s}", queueID, memberID),
-			&redis.FTSearchOptions{
-				WithScores: true,
-				Limit:      1,
-			},
-		).Result()
+			fmt.Sprintf(dequeueKey, queueID),
+			memberID,
+		).
+		Result()
 	if err != nil {
 		return false, err
 	}
 
-	return members.Total > 0, nil
-}
-
-type dequeueKyToStore struct {
-	ID      string   `json:"id"`
-	Members []string `json:"members"`
-}
-
-func dequeueAllMembersByScore(ctx context.Context, redisClient *redis.Client, queueID string) ([]string, error) {
-	members, err := redisClient.
-		ZRange(
-			ctx,
-			fmt.Sprintf(queueKey, queueID),
-			0,
-			-1,
-		).
-		Result()
-	if err != nil {
-		return []string{}, err
-	}
-
-	err = redisClient.
-		ZRemRangeByScore(
-			ctx,
-			fmt.Sprintf(queueKey, queueID),
-			"-inf", "+inf",
-		).
-		Err()
-	if err != nil {
-		return []string{}, err
-	}
-
-	if err := redisClient.Set(
-		ctx,
-		fmt.Sprintf(releaseKey, queueID),
-		true,
-		0,
-	).
-		Err(); err != nil {
-		return []string{}, err
-	}
-
-	return members, nil
+	return isDequeued, nil
 }
 
 func dequeueByRank(ctx context.Context, redisClient *redis.Client, queueID string, stop int64) ([]string, error) {
@@ -369,19 +324,11 @@ func dequeueByRank(ctx context.Context, redisClient *redis.Client, queueID strin
 		return []string{}, err
 	}
 
-	var d dequeueKyToStore
-	d.ID = queueID
-	d.Members = members
-	uid := uuid.New().String()
-
-	err = redisClient.JSONSet(
+	if err := redisClient.SAdd(
 		ctx,
-		fmt.Sprintf(dequeueKey, strings.Split(uid, "-")[4]),
-		"$",
-		d,
-	).
-		Err()
-	if err != nil {
+		fmt.Sprintf(dequeueKey, queueID),
+		members,
+	).Err(); err != nil {
 		return []string{}, err
 	}
 

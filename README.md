@@ -28,7 +28,3 @@ cd priority-queue
   go mod tidy
   go run example/main.go
 ```
-
-## Note
-
-Must be set ```Protocol``` to be ```2``` in redis new client.
