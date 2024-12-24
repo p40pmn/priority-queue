@@ -61,10 +61,8 @@ func main() {
 	}
 
 	members, err := q.Dequeue(ctx, &queue.DequeueReq{
-		ID:                 "LITD_QUEUE",
-		ReleaseAll:         false,
-		FirstDequeue:       true,
-		FirstDequeueNumber: 5,
+		ID:     "LITD_QUEUE",
+		Number: 5,
 	})
 	if err != nil {
 		log.Fatalf("failed to dequeue item: %v", err)
@@ -130,6 +128,10 @@ func main() {
 		log.Fatalf("failed to check dequeued: %v", err)
 	}
 	fmt.Println("pao dequeued: ", paoWasDequeued)
+
+	if err := q.Clear(ctx, "LITD_QUEUE"); err != nil {
+		log.Fatalf("failed to clear queue: %v", err)
+	}
 }
 
 func getEnv(key, fallback string) string {
